@@ -1,6 +1,7 @@
-#!/usr/bin/env python
-# landScraper.py -v 1.7
-# currently designed for python 3.10.2
+#!/usr/bin/env python3
+"""
+# landScraper.py -v 1.8
+# currently designed for python 3.11.2
 # Author- David Sullivan
 #
 # Credit to Michael Shilov from scraping.pro/simple-email-crawler-python for the base for this code
@@ -9,9 +10,6 @@
 # legitimate testers to validate the information provided on a website that they have explicit legal right to
 # scrape.
 #
-# Dependencies:
-# -pip install requests
-# -pip install bs4
 #
 # Revision  1.0     -   02/12/2018- Initial creation of script
 # Revision  1.1     -   04/06/2018- Added in some more error handling
@@ -24,37 +22,30 @@
 # Revision  1.6     -   10/20/2021- Added a User-Agent header to get around 403 errors
 # Revision  1.7     -   03/15/2022- Added 'touch' command to create output file if it doesn't exist to make it forward
 #                                   compatible with newer versions of python, updated bad link words
+# Revision  1.8     -   06/01/2026- Fixed parsing bug - TC
+"""
 
 import re
+import sys
 import requests.exceptions
 import argparse
 from collections import deque
+from pathlib import Path
 from urllib.parse import urlsplit
 from bs4 import BeautifulSoup
-
-# disable insecure request warning
 import urllib3
-
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 def manual_url():
-    # set starting url
-    starting_url = str(
-        input(r'Put in the full URL of where you want to start crawling (ex: http://test.local/local): '))
-    return starting_url
+    return input(r'Put in the full URL of where you want to start crawling (ex:http://test.local/local): ')
 
 
 def manual_email():
-    # set email domain
-    email_domain = str(input(r'Put in the email domain you are looking for (ex: @test.local): '))
-    return email_domain
+    return input(r'Put in the email domain you are looking for (ex: @test.local): ')
 
 
 def manual_output():
-    # set output file
-    outfile = str(input(r'Path and filename for results output (ex: /home/test/crawled_emails.txt): '))
-    return outfile
+    return input(r'Path and filename for results output (ex: /home/test/crawled_emails.txt): ')
 
 
 def scrape(starting_url, domain_name, email_domain, outfile):
@@ -90,9 +81,9 @@ def scrape(starting_url, domain_name, email_domain, outfile):
             path = url[:url.rfind('/') + 1] if '/' in parts.path else url
 
             # get url's content
-            print("Processing %s" % url)
+            print(f"Processing {url}")
             try:
-                response = requests.get(url, headers={'User-Agent': 'curl/7.72.0'}, verify=False, timeout=10)
+                response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0(Windows NT 10.0; Win64; x64; rv:98.0) Gecko/20100101 Firefox/98.0'}, verify=False, timeout=10)
             except (requests.exceptions.MissingSchema, requests.exceptions.ConnectionError):
                 # ignore pages with errors
                 continue
@@ -100,7 +91,7 @@ def scrape(starting_url, domain_name, email_domain, outfile):
                 cleanup_list(outfile, emails, email_domain)
 
             # extract all email addresses
-            new_emails = set(re.findall(r"[a-z0-9.\-+_]+@[a-z0-9.\-+_]+\.[a-z]+", response.text, re.I))
+            new_emails = set(re.findall(r"[a-z0-9.\-+_]+@[a-z0-9.\-+_]+\.[a-z]+"                                                                             , response.text, re.I))
 
             # write them to output file
             f = open(outfile, 'a+')
@@ -116,12 +107,24 @@ def scrape(starting_url, domain_name, email_domain, outfile):
                 # find and process all the anchors in the document
                 for anchor in soup.find_all("a"):
                     # extract link url from the anchor
-                    link = anchor.attrs["href"] if "href" in anchor.attrs else ''
+                    href = anchor.get("href", "")
+                    link = href if isinstance(href, str) else (href[0] if href else "")
+                    link = link.strip()
+
+                    # skip link with mailto:, tel:, etc., or are empty
+                    if not link or link.startswith('#'):
+                        continue
+                    if ":" in link.split('/', 1)[0] and not link.startswith(('http://', 'https://', '//')):
+                        continue
+
                     # resolve relative links
-                    if link.startswith('/'):
+                    if link.startswith('//'):
+                        link = parts.scheme + ':' + link
+                    elif link.startswith('/'):
                         link = base_url + link
-                    elif not link.startswith('http'):
+                    elif not link.startswith(('http://', 'https://')):
                         link = path + link
+
                     # add the new url to the queue if it was not enqueued nor processed yet
                     if not (link in new_urls or link in processed_urls):
                         # only add the new url if not in the bad_link_words list
@@ -134,24 +137,20 @@ def scrape(starting_url, domain_name, email_domain, outfile):
                 cleanup_list(outfile, emails, email_domain)
 
             except Exception:
-                # if the URL is too long this can error out
                 continue
 
         except KeyboardInterrupt:
             cleanup_list(outfile, emails, email_domain)
 
         except Exception:
-            # if some error occurs
             continue
 
     return emails
 
 
 def cleanup_list(outfile, emails, email_domain):
-    # cleaning up output
-    print("Cleaning up output file")
+    print("[+] Cleaning up output file")
 
-    # open the output file and import all the crawled emails
     f = open(outfile, 'r')
     for email in f:
         email = email.replace('\n', '')
@@ -176,18 +175,22 @@ def cleanup_list(outfile, emails, email_domain):
     f.close()
 
     # quit the script
-    print("Cleanup finished. Results can be found in %s" % outfile)
-    quit()
+    print(f"[+] Cleanup finished. Results output to {outfile}\n")
+    sys.exit(0)
 
 
 def main():
     # parse input for variables
-    parser = argparse.ArgumentParser(description='LandScraper- Domain Email Scraper')
+    parser = argparse.ArgumentParser(description='LandScraper - Domain Email Scraper')
     parser.add_argument('-u', '--url', help='Starting URL')
     parser.add_argument('-d', '--domain', help='Domain name (if different from starting URL')
     parser.add_argument('-e', '--email', help='Email Domain')
     parser.add_argument('-o', '--output', help='Output file name')
+
     args = parser.parse_args()
+
+    # disable insecure request warning
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
     # select url
     if args.url is not None:
@@ -214,8 +217,6 @@ def main():
         outfile = manual_output()
 
     # create outfile if it does not exist
-    from pathlib import Path
-
     myfile = Path(outfile)
     myfile.touch(exist_ok=True)
 
@@ -226,5 +227,5 @@ def main():
     cleanup_list(outfile, emails, email)
 
 
-main()
-
+if __name__ == '__main__':
+    main()
